@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/urfave/cli/v2"
@@ -13,7 +14,7 @@ import (
 	"github.com/ysmood/seploy/pkg/seploy"
 )
 
-var version = "dev"
+var version = ""
 
 func main() {
 	ctx := context.Background()
@@ -21,14 +22,25 @@ func main() {
 	glog.SetupDefaultSlog()
 
 	app := &cli.App{
-		Name:    "seploy",
-		Usage:   `Securely deploy containers to remote hosts`,
-		Version: version,
+		Name:  "seploy",
+		Usage: `Securely deploy containers to remote hosts`,
+		Version: func() string {
+			if version != "" {
+				return version
+			}
+
+			if info, ok := debug.ReadBuildInfo(); ok {
+				return info.Main.Version
+			}
+
+			return "dev"
+		}(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:    "target",
-				Aliases: []string{"t"},
-				Usage:   "SSH target (e.g. admin@host)",
+				Name:     "target",
+				Aliases:  []string{"t"},
+				Required: true,
+				Usage:    "SSH target (e.g. admin@host)",
 			},
 			&cli.StringFlag{
 				Name:    "private-key",
@@ -51,21 +63,24 @@ EXAMPLES:
 `,
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
-						Name:  "not-service",
-						Usage: "Do not run as a service",
+						Name:    "not-service",
+						Aliases: []string{"n"},
+						Usage:   "Do not run as a service",
 					},
 					&cli.BoolFlag{
-						Name:  "follow",
-						Usage: "Follow the logs of the container",
+						Name:    "follow",
+						Aliases: []string{"f"},
+						Usage:   "Follow the logs of the container",
 					},
 					&cli.StringSliceFlag{
-						Name:  "env-file",
-						Usage: "dotenv file to set environment variables for the container",
+						Name:    "env-file",
+						Aliases: []string{"e"},
+						Usage:   "dotenv file to set environment variables for the container",
 					},
 					&cli.StringSliceFlag{
 						Name:    "volume",
 						Aliases: []string{"v"},
-						Usage:   "Bind mount a name scoped volume",
+						Usage:   "Bind mount a name scoped volume, such `seploy -t admin@stg up -v data:/data my-app` will become `-v my-app-data:/data`",
 					},
 				},
 				Action: func(c *cli.Context) error {
