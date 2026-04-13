@@ -43,37 +43,46 @@ type Deployment struct {
 	DockerRunVolumes  []string
 }
 
-func (d *Deployment) Deploy(ctx context.Context) error {
+// Deploy runs the deployment and returns a close function that releases
+// resources held during the run (currently the temporary local docker
+// registry). The returned close is always non-nil and safe to call
+// multiple times; callers should defer it and arrange for it to run on
+// process signals (e.g. SIGINT/SIGTERM) to avoid leaking the registry
+// container.
+func (d *Deployment) Deploy(ctx context.Context) (func(), error) {
+	noop := func() {}
+
 	lg.Info(ctx, "Start deployment", "image",
 		d.ImageTag, "host", d.host(), "time", time.Now().Format(time.RFC3339))
 
 	if err := d.hasDangerousOptions(); err != nil {
-		return err
+		return noop, err
 	}
 
 	registry, stop, err := d.startRegistry(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to start registry: %w", err)
+		return noop, fmt.Errorf("failed to start registry: %w", err)
 	}
 
-	defer func() {
-		if stop != nil {
-			stop()
-		}
-	}()
+	if err := d.deployWithRegistry(ctx, registry); err != nil {
+		return stop, err
+	}
 
-	err = d.waitRegistryReady(ctx, registry)
-	if err != nil {
+	lg.Info(ctx, "Deployment done", "image", d.ImageTag, "host", d.host())
+
+	return stop, nil
+}
+
+func (d *Deployment) deployWithRegistry(ctx context.Context, registry string) error {
+	if err := d.waitRegistryReady(ctx, registry); err != nil {
 		return fmt.Errorf("failed to wait registry ready: %w", err)
 	}
 
-	err = d.registerImage(ctx, registry)
-	if err != nil {
+	if err := d.registerImage(ctx, registry); err != nil {
 		return fmt.Errorf("failed to deploy image: %w", err)
 	}
 
-	err = d.deploy(ctx, registry)
-	if err != nil {
+	if err := d.deploy(ctx, registry); err != nil {
 		return fmt.Errorf("failed to run container: %w", err)
 	}
 
@@ -167,8 +176,6 @@ func (d *Deployment) deploy(ctx context.Context, registry string) error {
 		return fmt.Errorf("ssh failed to run script: %w", err)
 	}
 
-	lg.Info(ctx, "Deployment done", "image", d.ImageTag, "host", d.host())
-
 	return nil
 }
 
@@ -247,26 +254,30 @@ func (d *Deployment) startRegistry(ctx context.Context) (string, func(), error) 
 		}
 	}
 
+	stop := func() {
+		err := execScript("docker stop "+name, nil)
+		if err != nil {
+			lg.Error(ctx, "Failed to stop registry", "name", name, "err", err)
+		}
+	}
+
 	buf := bytes.NewBuffer(nil)
 	cmd := exec.Command("docker", "port", name)
 	cmd.Stdout = buf
 
 	err := cmd.Run()
 	if err != nil {
+		stop()
 		return "", nil, fmt.Errorf("failed to get registry port: %w", err)
 	}
 
 	ms := regexp.MustCompile(`127.0.0.1:\d+`).FindStringSubmatch(buf.String())
 	if ms == nil {
+		stop()
 		return "", nil, fmt.Errorf("failed to get registry addr: %s", buf.String())
 	}
 
-	return ms[0], func() {
-		err = execScript("docker stop "+name, nil)
-		if err != nil {
-			lg.Error(ctx, "Failed to stop registry", "name", name, "err", err)
-		}
-	}, nil
+	return ms[0], stop, nil
 }
 
 func (d *Deployment) waitRegistryReady(ctx context.Context, u string) error {

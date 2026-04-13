@@ -153,20 +153,43 @@ func (d *Deployment) proxyRegistry(ctx context.Context, client *ssh.Client, dest
 				}
 				defer func() { _ = dest.Close() }()
 
-				go func() {
-					defer func() { _ = dest.Close() }()
-
-					if _, err := io.Copy(dest, src); err != nil {
-						lg.Error(ctx, "Failed to copy from src to registry", "err", err)
-					}
-				}()
-
-				if _, err := io.Copy(src, dest); err != nil {
-					lg.Error(ctx, "Failed to copy from registry to dest", "err", err)
-				}
+				proxyCopy(ctx, src, dest)
 			}()
 		}
 	}()
 
 	return srcRegistry, nil
+}
+
+// proxyCopy shuttles bytes in both directions between a and b, returning when
+// both directions are done. Errors from a peer closing the connection are
+// expected and not logged.
+func proxyCopy(ctx context.Context, a, b net.Conn) {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if _, err := io.Copy(b, a); err != nil && !isClosedConnErr(err) {
+			lg.Error(ctx, "Failed to copy from src to registry", "err", err)
+		}
+
+		if c, ok := b.(interface{ CloseWrite() error }); ok {
+			_ = c.CloseWrite()
+		}
+	}()
+
+	if _, err := io.Copy(a, b); err != nil && !isClosedConnErr(err) {
+		lg.Error(ctx, "Failed to copy from registry to dest", "err", err)
+	}
+
+	if c, ok := a.(interface{ CloseWrite() error }); ok {
+		_ = c.CloseWrite()
+	}
+
+	<-done
+}
+
+func isClosedConnErr(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF)
 }
