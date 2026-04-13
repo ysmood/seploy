@@ -36,7 +36,7 @@ func (d *Deployment) RemoveContainer() error {
 
 	err := d.sshExecWithOutput(`
 		docker stop `+name+`
-		docker rm -f `+name+` > /dev/null 2>&1
+		docker rm -f `+name+` > /dev/null 2>&1 || true
 	`, os.Stdout, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("ssh failed to run script: %w", err)

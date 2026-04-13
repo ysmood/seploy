@@ -1,49 +1,85 @@
-set -e
+# No `set -e`: this script manages rollback explicitly and every command
+# below has a deliberate policy (fail→abort, fail→rollback, or fail→ignore).
+# `-u` catches unset vars, `pipefail` surfaces failures through pipelines.
+set -uo pipefail
 
-docker pull {{.registryTag}}
-docker tag {{.registryTag}} {{.tag}}
-docker rmi {{.registryTag}}
+die() {
+	echo "ERROR: $*" >&2
+	exit 1
+}
 
-# Create network if not exists
-docker network inspect seploy >/dev/null 2>&1 || docker network create seploy
+# --- Image and network prep ------------------------------------------------
+# No prior state to preserve yet; any failure here aborts the deploy.
 
-container_id=$(docker ps -aqf "name=^$(echo {{.name}})\$")
+docker pull {{.registryTag}} || die "docker pull {{.registryTag}} failed"
+docker tag {{.registryTag}} {{.tag}} || die "docker tag {{.registryTag}} {{.tag}} failed"
+docker rmi {{.registryTag}} >/dev/null 2>&1 || true  # harmless if still referenced
 
-if [ -n "$container_id" ]
-then
-	echo "Stopping container {{.name}} ..."
-	docker stop {{.name}} || container_id=""
+if ! docker network inspect seploy >/dev/null 2>&1; then
+	docker network create seploy || die "failed to create docker network 'seploy'"
 fi
 
-# If run with --rm, the container is removed on stop, so container_id is empty
-if [ -n "$container_id" ] && [ -z "$(docker ps -aqf "id=$container_id")" ]; then
+# --- Locate and preserve previous container --------------------------------
+
+# The template renders {{.name}} already shell-escaped (e.g. 'nginx').
+# That's correct for argv positions, but breaks docker's regex filter where
+# the quotes become literal characters. Bind to a shell var so we can use
+# the unquoted value via "$name" in filters.
+name={{.name}}
+
+container_id=$(docker ps -aqf "name=^${name}\$") || die "failed to list containers"
+
+if [ -n "$container_id" ]; then
+	echo "Stopping container $name ..."
+	if docker stop "$name"; then
+		# If run with --rm, docker removes the container asynchronously after
+		# stop. Wait so the existence check below isn't racy.
+		docker wait "$container_id" >/dev/null 2>&1 || true
+	else
+		# Stop failed — treat as unmanageable; skip preservation.
+		container_id=""
+	fi
+fi
+
+# If the previous container was --rm, it's gone now.
+if [ -n "$container_id" ] && ! docker inspect "$container_id" >/dev/null 2>&1; then
 	container_id=""
 fi
 
-# Stop the current container if it exists, preserve the container by renaming it to $container_id
-if [ -n "$container_id" ]
-then
-	echo "Renaming container {{.name}} to $container_id ..."
-	docker rename {{.name}} "$container_id" || container_id=""
+# Preserve the previous container by renaming it to its ID so rollback can
+# restore it. If rename fails, we can't safely proceed — the subsequent
+# `docker run --name {{.name}}` would collide and we'd have no rollback target.
+if [ -n "$container_id" ]; then
+	echo "Renaming container $name to $container_id ..."
+	docker rename "$name" "$container_id" \
+		|| die "failed to rename container $name to $container_id"
 fi
 
-cleanup()
-{
-	if [ -n "$container_id" ]
-	then
+# --- Cleanup / rollback helpers --------------------------------------------
+
+cleanup() {
+	if [ -n "$container_id" ]; then
 		echo "Cleanup previous container..."
-		docker rm "$container_id"
+		docker rm -f "$container_id" >/dev/null 2>&1 || true
 	fi
 }
 
-rollback()
-{
-	if [ -n "$container_id" ]
-	then
+rollback() {
+	if [ -n "$container_id" ]; then
 		echo "Rollback to previous container..."
 
-		docker rename "$container_id" {{.name}}
-		docker start {{.name}}
+		# Free the $name slot. The new container may be running, may be
+		# mid-async-removal (--rm), or may be an already-removed leftover.
+		docker stop "$name" >/dev/null 2>&1 || true
+		docker wait "$name" >/dev/null 2>&1 || true
+		docker rm -f "$name" >/dev/null 2>&1 || true
+
+		# Critical steps — if either fails we're in a broken state and must
+		# surface it loudly rather than exit 1 silently.
+		docker rename "$container_id" "$name" \
+			|| die "rollback failed: could not rename $container_id back to $name (manual intervention required)"
+		docker start "$name" \
+			|| die "rollback failed: could not start $name (manual intervention required)"
 
 		echo "Rolled back to previous container"
 	fi
@@ -51,11 +87,10 @@ rollback()
 	exit 1
 }
 
-echo "Starting container {{.name}} ..."
+# --- Start the new container -----------------------------------------------
 
-# If the container starts successfully, remove the previous container.
-# If the container fails to start, remove the new container and rename the previous container back to the original name.
-# This is to ensure that the previous container is still running if the new container fails to start.
+echo "Starting container $name ..."
+
 if ! docker run {{.service}} \
 	--name {{.name}} \
 	--label {{.hostLabel}} \
@@ -74,23 +109,25 @@ fi
 	exit 0
 {{ end}}
 
-echo "Waiting for container to be stable..."
+# --- Stability check -------------------------------------------------------
 
+echo "Waiting for container to be stable..."
 sleep 5
 
-restartCount=$(docker inspect -f {{"'{{.RestartCount}}'"}} {{.name}})
+restartCount=$(docker inspect -f {{"'{{.RestartCount}}'"}} "$name" | tr -d "'")
+restartCount=${restartCount:-0}
 
-if [ $restartCount -gt 0 ]; then
-	docker stop {{.name}}
+if [ "$restartCount" -gt 0 ]; then
+	echo "Stopping container $name due to restart count: $restartCount, logs for the container:"
 
-	echo "Stopped container {{.name}} due to restart count: $restartCount, logs for the container:"
-
-	docker logs -n 1000 {{.name}}
-	docker rm {{.name}}
+	docker logs -n 1000 "$name" || true
+	docker stop "$name" >/dev/null 2>&1 || true
+	docker wait "$name" >/dev/null 2>&1 || true
+	docker rm -f "$name" >/dev/null 2>&1 || true
 
 	rollback
 else
 	cleanup
 fi
 
-echo "Container {{.name}} started"
+echo "Container $name started"
