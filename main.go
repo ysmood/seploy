@@ -8,7 +8,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 	"github.com/ysmood/glog"
 	"github.com/ysmood/glog/pkg/lg"
 	"github.com/ysmood/seploy/pkg/seploy"
@@ -21,7 +21,7 @@ func main() {
 
 	glog.SetupDefaultSlog()
 
-	app := &cli.App{
+	app := &cli.Command{
 		Name:  "seploy",
 		Usage: `Securely deploy containers to remote hosts`,
 		Version: func() string {
@@ -37,10 +37,9 @@ func main() {
 		}(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     "target",
-				Aliases:  []string{"t"},
-				Required: true,
-				Usage:    "SSH target (e.g. admin@host)",
+				Name:    "target",
+				Aliases: []string{"t"},
+				Usage:   "SSH target (e.g. admin@host)",
 			},
 			&cli.StringFlag{
 				Name:    "private-key",
@@ -75,28 +74,28 @@ EXAMPLES:
 					&cli.StringSliceFlag{
 						Name:    "env-file",
 						Aliases: []string{"e"},
-						Usage:   "dotenv file to set environment variables for the container",
+						Usage:   "dotenv files to set environment variables for the container",
 					},
 					&cli.StringSliceFlag{
 						Name:    "volume",
 						Aliases: []string{"v"},
-						Usage:   "Bind mount a name scoped volume, such `seploy -t admin@stg up -v data:/data my-app` will become `-v my-app-data:/data`",
+						Usage:   `Bind mount a name scoped volume, such "seploy -t admin@stg up -v data:/data my-app" will become "-v my-app-data:/data"`,
 					},
 				},
-				Action: func(c *cli.Context) error {
-					target := requireTarget(c)
+				Action: func(ctx context.Context, c *cli.Command) error {
+					target := requireTarget(ctx, c)
 					if c.NArg() < 1 {
-						lg.Error(c.Context, "IMAGE_TAG arg is required")
+						lg.Error(ctx, "IMAGE_TAG arg is required")
 						err := cli.ShowSubcommandHelp(c)
 						if err != nil {
-							lg.Error(c.Context, "Failed to show help", "err", err)
+							lg.Error(ctx, "Failed to show help", "err", err)
 						}
 						os.Exit(1)
 					}
 
-					d, err := newDeployment(c.Context, target, c.String("private-key"))
+					d, err := newDeployment(ctx, target, c.String("private-key"))
 					if err != nil {
-						lg.Error(c.Context, err.Error())
+						lg.Error(ctx, err.Error())
 						os.Exit(1)
 					}
 					d.ImageTag = c.Args().Get(0)
@@ -116,16 +115,16 @@ EXAMPLES:
 						if !ok {
 							return
 						}
-						lg.Info(c.Context, "Received signal, cleaning up", "signal", sig)
+						lg.Info(ctx, "Received signal, cleaning up", "signal", sig)
 						closer()
 						os.Exit(1)
 					}()
 
-					close, err := d.Deploy(c.Context)
+					close, err := d.Deploy(ctx)
 					closer = close
 					defer close()
 					if err != nil {
-						lg.Error(c.Context, "Failed to run container", "err", err)
+						lg.Error(ctx, "Failed to run container", "err", err)
 						os.Exit(1)
 					}
 
@@ -136,26 +135,26 @@ EXAMPLES:
 				Name:      "remove",
 				Usage:     "Remove a container from a host",
 				UsageText: `seploy -t SSH_TARGET remove IMAGE_TAG`,
-				Action: func(c *cli.Context) error {
-					target := requireTarget(c)
+				Action: func(ctx context.Context, c *cli.Command) error {
+					target := requireTarget(ctx, c)
 					if c.NArg() < 1 {
-						lg.Error(c.Context, "IMAGE_TAG arg is required")
+						lg.Error(ctx, "IMAGE_TAG arg is required")
 						err := cli.ShowSubcommandHelp(c)
 						if err != nil {
-							lg.Error(c.Context, "Failed to show help", "err", err)
+							lg.Error(ctx, "Failed to show help", "err", err)
 						}
 						os.Exit(1)
 					}
 
-					d, err := newDeployment(c.Context, target, c.String("private-key"))
+					d, err := newDeployment(ctx, target, c.String("private-key"))
 					if err != nil {
-						lg.Error(c.Context, err.Error())
+						lg.Error(ctx, err.Error())
 						os.Exit(1)
 					}
 					d.ImageTag = c.Args().Get(0)
 					err = d.RemoveContainer()
 					if err != nil {
-						lg.Error(c.Context, "Failed to remove container", "err", err)
+						lg.Error(ctx, "Failed to remove container", "err", err)
 						os.Exit(1)
 					}
 
@@ -166,26 +165,26 @@ EXAMPLES:
 				Name:      "remove-volume",
 				Usage:     "Remove a volume on a host",
 				UsageText: `seploy -t SSH_TARGET remove-volume VOLUME_NAME`,
-				Action: func(c *cli.Context) error {
-					target := requireTarget(c)
+				Action: func(ctx context.Context, c *cli.Command) error {
+					target := requireTarget(ctx, c)
 					if c.NArg() < 1 {
-						lg.Error(c.Context, "VOLUME_NAME arg is required")
+						lg.Error(ctx, "VOLUME_NAME arg is required")
 						err := cli.ShowSubcommandHelp(c)
 						if err != nil {
-							lg.Error(c.Context, "Failed to show help", "err", err)
+							lg.Error(ctx, "Failed to show help", "err", err)
 						}
 						os.Exit(1)
 					}
 
 					volumeName := c.Args().Get(0)
-					d, err := newDeployment(c.Context, target, c.String("private-key"))
+					d, err := newDeployment(ctx, target, c.String("private-key"))
 					if err != nil {
-						lg.Error(c.Context, err.Error())
+						lg.Error(ctx, err.Error())
 						os.Exit(1)
 					}
 					err = d.RemoveVolume(volumeName)
 					if err != nil {
-						lg.Error(c.Context, "Failed to remove volume", "err", err)
+						lg.Error(ctx, "Failed to remove volume", "err", err)
 						os.Exit(1)
 					}
 
@@ -196,15 +195,15 @@ EXAMPLES:
 				Name:      "list",
 				Usage:     "List container resources",
 				UsageText: `seploy -t SSH_TARGET list`,
-				Action: func(c *cli.Context) error {
-					d, err := newDeployment(c.Context, c.String("target"), c.String("private-key"))
+				Action: func(ctx context.Context, c *cli.Command) error {
+					d, err := newDeployment(ctx, c.String("target"), c.String("private-key"))
 					if err != nil {
-						lg.Error(c.Context, err.Error())
+						lg.Error(ctx, err.Error())
 						os.Exit(1)
 					}
 					err = d.List()
 					if err != nil {
-						lg.Error(c.Context, "Failed to list resources", "err", err)
+						lg.Error(ctx, "Failed to list resources", "err", err)
 						os.Exit(1)
 					}
 
@@ -214,7 +213,7 @@ EXAMPLES:
 		},
 	}
 
-	err := app.RunContext(ctx, os.Args)
+	err := app.Run(ctx, os.Args)
 	if err != nil {
 		lg.Error(ctx, "Failed to run app", "err", err)
 		os.Exit(1)
@@ -238,13 +237,13 @@ func newDeployment(ctx context.Context, sshTarget, privateKeyPath string) (*sepl
 	return d, nil
 }
 
-func requireTarget(c *cli.Context) string {
+func requireTarget(ctx context.Context, c *cli.Command) string {
 	target := c.String("target")
 	if target == "" {
-		lg.Error(c.Context, "SSH target is required (-t SSH_TARGET)")
+		lg.Error(ctx, "SSH target is required (-t SSH_TARGET)")
 		err := cli.ShowSubcommandHelp(c)
 		if err != nil {
-			lg.Error(c.Context, "Failed to show help", "err", err)
+			lg.Error(ctx, "Failed to show help", "err", err)
 		}
 		os.Exit(1)
 	}
