@@ -9,12 +9,18 @@ The dependency for the tool is only docker, no need for local ssh.
 
 Example to use it as a CLI tool:
 
-```go
+```bash
 go install github.com/ysmood/seploy@latest
 
-docker pull nginx
+cat <<EOF > Dockerfile
+FROM nginx
+EOF
 
-seploy -t admin@stg up nginx
+# Build a local docker image.
+docker build -t my-app:v0.0.1 .
+
+# Deploy the image we build to the remote server.
+seploy -t admin@stg up my-app:v0.0.1
 ```
 
 Example to use it as a library:
