@@ -156,6 +156,9 @@ func (pw *prefixedWriter) emit(line []byte) error {
 	if _, err := pw.w.Write(line); err != nil {
 		return err
 	}
+	if _, err := pw.w.Write([]byte{'\n'}); err != nil {
+		return err
+	}
 	return nil
 }
 
