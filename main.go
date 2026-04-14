@@ -105,7 +105,7 @@ EXAMPLES:
 					d.EnvFiles = c.StringSlice("env-file")
 					d.DockerRunVolumes = c.StringSlice("volume")
 
-					d.DockerRunOptions, d.DockerRunCommands = parseDockerRunArgs(c.Args().Slice()[1:])
+					d.DockerRunOptions, d.DockerRunCommands = parseDockerRunArgs(c.Args().Slice()[1:], os.Args)
 
 					closer := func() {}
 					sigCh := make(chan os.Signal, 1)
@@ -251,19 +251,17 @@ func requireTarget(ctx context.Context, c *cli.Command) string {
 	return target
 }
 
-func parseDockerRunArgs(args []string) ([]string, []string) {
-	var dockerRunArgs []string
+// parseDockerRunArgs splits args into docker-run options and commands.
+// urfave/cli/v3 strips "--" from c.Args(), so rawArgs (os.Args) is scanned
+// to locate the terminator.
+func parseDockerRunArgs(args, rawArgs []string) ([]string, []string) {
 	var commands []string
-
-	for i, arg := range args {
-		if arg == "--" {
-			if i+1 < len(args) {
-				commands = args[i+1:]
-			}
+	for i, a := range rawArgs {
+		if a == "--" {
+			commands = rawArgs[i+1:]
 			break
 		}
-		dockerRunArgs = append(dockerRunArgs, arg)
 	}
-
-	return dockerRunArgs, commands
+	options := args[:len(args)-len(commands)]
+	return options, commands
 }
