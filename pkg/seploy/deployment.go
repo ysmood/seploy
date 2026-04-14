@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ysmood/glog/pkg/lg"
@@ -254,11 +255,14 @@ func (d *Deployment) startRegistry(ctx context.Context) (string, func(), error) 
 		}
 	}
 
+	stopOnce := sync.Once{}
 	stop := func() {
-		err := execScript("docker stop "+name, nil)
-		if err != nil {
-			lg.Error(ctx, "Failed to stop registry", "name", name, "err", err)
-		}
+		stopOnce.Do(func() {
+			err := execScript("docker rm -f "+name, nil)
+			if err != nil {
+				lg.Error(ctx, "Failed to stop registry", "name", name, "err", err)
+			}
+		})
 	}
 
 	buf := bytes.NewBuffer(nil)
