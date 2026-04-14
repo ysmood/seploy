@@ -49,8 +49,9 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:  "up",
-				Usage: "Deploy a container to a host",
+				Name:         "up",
+				Usage:        "Deploy a container to a host",
+				StopOnNthArg: func() *int { n := 1; return &n }(),
 				UsageText: `seploy -t SSH_TARGET up [OPTION...] IMAGE_TAG [DOCKER_RUN_ARG...] [-- [DOCKER_RUN_COMMAND...]]
 
 EXAMPLES:
