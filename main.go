@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"runtime/debug"
-	"syscall"
 
 	"github.com/urfave/cli/v3"
 	"github.com/ysmood/glog"
@@ -107,24 +105,7 @@ EXAMPLES:
 
 					d.DockerRunOptions, d.DockerRunCommands = parseDockerRunArgs(c.Args().Slice()[1:], os.Args)
 
-					closer := func() {}
-					sigCh := make(chan os.Signal, 1)
-					signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-					defer signal.Stop(sigCh)
-					go func() {
-						sig, ok := <-sigCh
-						if !ok {
-							return
-						}
-						lg.Info(ctx, "Received signal, cleaning up", "signal", sig)
-						closer()
-						os.Exit(1)
-					}()
-
-					close, err := d.Deploy(ctx)
-					closer = close
-					defer close()
-					if err != nil {
+					if err := d.Deploy(ctx); err != nil {
 						lg.Error(ctx, "Failed to run container", "err", err)
 						os.Exit(1)
 					}

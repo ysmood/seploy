@@ -12,8 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ysmood/glog/pkg/lg"
@@ -27,6 +27,18 @@ var scriptRegisterImage string
 
 //go:embed ensure-docker.sh
 var scriptEnsureDocker string
+
+// registryImage is the published registry image bundled with a heartbeat
+// watchdog. See pkg/seploy/registry/ for the Dockerfile.
+const registryImage = "ysmood/seploy-registry:v0.0.8"
+
+// registryHeartbeatPeriod is how often seploy refreshes the heartbeat
+// file. It must be well below the container-side timeout (1s).
+const registryHeartbeatPeriod = 300 * time.Millisecond
+
+// registryHeartbeatMount is where the heartbeat file lives inside the
+// container. Matches the default in registry/entrypoint.sh.
+const registryHeartbeatMount = "/tmp/seploy-heartbeat"
 
 type Deployment struct {
 	NotService bool
@@ -44,34 +56,30 @@ type Deployment struct {
 	DockerRunVolumes  []string
 }
 
-// Deploy runs the deployment and returns a close function that releases
-// resources held during the run (currently the temporary local docker
-// registry). The returned close is always non-nil and safe to call
-// multiple times; callers should defer it and arrange for it to run on
-// process signals (e.g. SIGINT/SIGTERM) to avoid leaking the registry
-// container.
-func (d *Deployment) Deploy(ctx context.Context) (func(), error) {
-	noop := func() {}
-
+// Deploy runs the deployment. The temporary registry container reaps
+// itself via its heartbeat watchdog when seploy stops refreshing the
+// heartbeat file — which happens automatically on process exit (clean,
+// SIGINT, SIGKILL, crash) or when ctx is cancelled.
+func (d *Deployment) Deploy(ctx context.Context) error {
 	lg.Info(ctx, "Start deployment", "image",
 		d.ImageTag, "host", d.host(), "time", time.Now().Format(time.RFC3339))
 
 	if err := d.hasDangerousOptions(); err != nil {
-		return noop, err
+		return err
 	}
 
-	registry, stop, err := d.startRegistry(ctx)
+	registry, err := d.startRegistry(ctx)
 	if err != nil {
-		return noop, fmt.Errorf("failed to start registry: %w", err)
+		return fmt.Errorf("failed to start registry: %w", err)
 	}
 
 	if err := d.deployWithRegistry(ctx, registry); err != nil {
-		return stop, err
+		return err
 	}
 
 	lg.Info(ctx, "Deployment done", "image", d.ImageTag, "host", d.host())
 
-	return stop, nil
+	return nil
 }
 
 func (d *Deployment) deployWithRegistry(ctx context.Context, registry string) error {
@@ -229,59 +237,96 @@ func (d *Deployment) hasDangerousOptions() error {
 	return nil
 }
 
-func (d *Deployment) startRegistry(ctx context.Context) (string, func(), error) {
+// startRegistry launches the temporary registry container and kicks off
+// the heartbeat goroutine. No stop function is returned: the container's
+// watchdog tears it down on its own once heartbeats stop, so cleanup
+// happens uniformly whether seploy exits cleanly, crashes, or is killed.
+// On error paths after `docker run`, the seeded-but-never-refreshed
+// heartbeat file ages out and the watchdog reaps the container.
+func (d *Deployment) startRegistry(ctx context.Context) (string, error) {
 	lg.Info(ctx, "Start temporary docker registry")
 
-	var name string
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate name: %w", err)
+	}
+	name := "seploy-" + hex.EncodeToString(b)
 
-	{
-		b := make([]byte, 8)
-
-		_, err := rand.Read(b)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to generate name: %w", err)
-		}
-
-		name = "seploy-" + hex.EncodeToString(b)
+	heartbeatPath, err := createHeartbeatFile()
+	if err != nil {
+		return "", err
 	}
 
-	{
-		cmd := exec.Command("docker", "run", "-d", "--name", name, "--rm",
-			"-p", "127.0.0.1:0:5000", "-v", "seploy-registry:/var/lib/registry", "registry")
-
-		err := cmd.Run()
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to start registry: %w", err)
-		}
-	}
-
-	stopOnce := sync.Once{}
-	stop := func() {
-		stopOnce.Do(func() {
-			err := execScript("docker rm -f "+name, nil)
-			if err != nil {
-				lg.Error(ctx, "Failed to stop registry", "name", name, "err", err)
-			}
-		})
+	runCmd := exec.Command("docker", "run", "-d", "--name", name, "--rm",
+		"-p", "127.0.0.1:0:5000",
+		"-v", "seploy-registry:/var/lib/registry",
+		"-v", heartbeatPath+":"+registryHeartbeatMount,
+		registryImage)
+	if err := runCmd.Run(); err != nil {
+		_ = os.Remove(heartbeatPath)
+		return "", fmt.Errorf("failed to start registry: %w", err)
 	}
 
 	buf := bytes.NewBuffer(nil)
-	cmd := exec.Command("docker", "port", name)
-	cmd.Stdout = buf
-
-	err := cmd.Run()
-	if err != nil {
-		stop()
-		return "", nil, fmt.Errorf("failed to get registry port: %w", err)
+	portCmd := exec.Command("docker", "port", name)
+	portCmd.Stdout = buf
+	if err := portCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to get registry port: %w", err)
 	}
 
 	ms := regexp.MustCompile(`127.0.0.1:\d+`).FindStringSubmatch(buf.String())
 	if ms == nil {
-		stop()
-		return "", nil, fmt.Errorf("failed to get registry addr: %s", buf.String())
+		return "", fmt.Errorf("failed to get registry addr: %s", buf.String())
 	}
 
-	return ms[0], stop, nil
+	go sendHeartbeats(ctx, heartbeatPath)
+
+	return ms[0], nil
+}
+
+// createHeartbeatFile creates a host-side file seeded with an initial
+// heartbeat value so the container's watchdog has something to compare
+// against as soon as the bind mount is in place.
+func createHeartbeatFile() (string, error) {
+	f, err := os.CreateTemp("", "seploy-heartbeat-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create heartbeat file: %w", err)
+	}
+	_, err = f.WriteString(heartbeatValue())
+	_ = f.Close()
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("failed to write heartbeat file: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// sendHeartbeats periodically overwrites the heartbeat file with a value
+// that differs from the previous tick. The container's watchdog kills
+// the registry when two consecutive reads see the same content. Stops
+// when ctx is cancelled.
+func sendHeartbeats(ctx context.Context, path string) {
+	tick := func() {
+		_ = os.WriteFile(path, []byte(heartbeatValue()), 0o644)
+	}
+	tick()
+
+	t := time.NewTicker(registryHeartbeatPeriod)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
+}
+
+// heartbeatValue returns a value guaranteed to differ across consecutive
+// ticks at sub-second rates (nanosecond-resolution wall clock).
+func heartbeatValue() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func (d *Deployment) waitRegistryReady(ctx context.Context, u string) error {
