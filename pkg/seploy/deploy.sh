@@ -47,12 +47,17 @@ if [ -n "$container_id" ] && ! docker inspect "$container_id" >/dev/null 2>&1; t
 fi
 
 # Preserve the previous container by renaming it to its ID so rollback can
-# restore it. If rename fails, we can't safely proceed — the subsequent
-# `docker run --name {{.name}}` would collide and we'd have no rollback target.
+# restore it. Rename can race with async `--rm` removal: inspect above may
+# see the container but rename then fails because it's gone. In that case
+# there's nothing to preserve — clear container_id and continue.
 if [ -n "$container_id" ]; then
 	echo "Renaming container $name to $container_id ..."
-	docker rename "$name" "$container_id" \
-		|| die "failed to rename container $name to $container_id"
+	if ! docker rename "$name" "$container_id" 2>/dev/null; then
+		if docker inspect "$container_id" >/dev/null 2>&1; then
+			die "failed to rename container $name to $container_id"
+		fi
+		container_id=""
+	fi
 fi
 
 # --- Cleanup / rollback helpers --------------------------------------------
