@@ -81,6 +81,12 @@ func (d *Deployment) connectSSH() (*ssh.Client, error) {
 		User:            user,
 		Auth:            auths,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		// Forward server banner messages (e.g. Tailscale SSH check-mode
+		// login URLs) instead of silently dropping them.
+		BannerCallback: func(message string) error {
+			_, _ = newPrefixedWriter(os.Stderr, host+" ! ").Write([]byte(message))
+			return nil
+		},
 	}
 
 	addr := net.JoinHostPort(host, port)
