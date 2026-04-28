@@ -204,19 +204,19 @@ func (d *Deployment) getEnvFile() ([]byte, error) {
 
 func (d *Deployment) getRepoInfo() (string, string) {
 	buf := bytes.NewBuffer(nil)
+	errMsg := fmt.Sprintf("invalid git info: %s", buf.String())
 
-	err := execWithIO(nil, buf, buf, "echo $(git config --get remote.origin.url) $(git rev-parse HEAD)", nil)
+	originURL, err := exec.Command("git", "config", "--get", "remote.origin.url").CombinedOutput()
 	if err != nil {
-		return err.Error(), err.Error()
+		return errMsg, errMsg
 	}
 
-	info := strings.Split(strings.TrimSpace(buf.String()), " ")
-	if len(info) != 2 {
-		msg := fmt.Sprintf("invalid git info: %s", buf.String())
-		return msg, msg
+	rev, err := exec.Command("git", "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		return errMsg, errMsg
 	}
 
-	return normalizeRepoURL(info[0]), info[1]
+	return normalizeRepoURL(string(originURL)), string(rev)
 }
 
 // check if has dangerous docker run options.

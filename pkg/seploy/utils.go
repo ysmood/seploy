@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/ysmood/gop"
 )
 
 // List prints running containers and volumes on the target host.
@@ -82,17 +84,14 @@ func imageName(imageTag string) string {
 }
 
 func execScript(script string, vars map[string]string) error {
-	stdout := newPrefixedWriter(os.Stdout, "bash | ")
-	stderr := newPrefixedWriter(os.Stderr, "bash ! ")
+	const shell = "bash"
+	stdout := newPrefixedWriter(os.Stdout, shell+" | ")
+	stderr := newPrefixedWriter(os.Stderr, shell+" ! ")
 
 	defer stdout.Flush()
 	defer stderr.Flush()
 
-	return execWithIO(nil, stdout, stderr, script, vars)
-}
-
-func execWithIO(input io.Reader, stdout, stderr io.Writer, script string, vars map[string]string) error {
-	cmd := exec.Command("bash", "-c", script)
+	cmd := exec.Command(shell, "-c", script)
 
 	env := []string{}
 	for k, v := range vars {
@@ -100,7 +99,7 @@ func execWithIO(input io.Reader, stdout, stderr io.Writer, script string, vars m
 	}
 
 	cmd.Env = append(append([]string{}, env...), os.Environ()...)
-	cmd.Stdin = input
+	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -116,7 +115,7 @@ type prefixedWriter struct {
 }
 
 func newPrefixedWriter(w io.Writer, prefix string) *prefixedWriter {
-	return &prefixedWriter{w: w, prefix: []byte(prefix)}
+	return &prefixedWriter{w: w, prefix: []byte(gop.Stylize(prefix, []gop.Style{gop.Faint}))}
 }
 
 func (pw *prefixedWriter) Write(p []byte) (int, error) {

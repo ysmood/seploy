@@ -5,6 +5,7 @@ go 1.25.3
 require (
 	github.com/urfave/cli/v3 v3.8.0
 	github.com/ysmood/glog v0.0.1
+	github.com/ysmood/gop v0.3.0
 	golang.org/x/crypto v0.50.0
 )
 
