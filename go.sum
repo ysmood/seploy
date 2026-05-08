@@ -62,10 +62,10 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/urfave/cli/v3 v3.8.0 h1:XqKPrm0q4P0q5JpoclYoCAv0/MIvH/jZ2umzuf8pNTI=
 github.com/urfave/cli/v3 v3.8.0/go.mod h1:ysVLtOEmg2tOy6PknnYVhDoouyC/6N42TMeoMzskhso=
-github.com/ysmood/glog v0.0.1 h1:579b78KXuQ6aKBEpieqUItYYRDCClrDP06HbrNSAGVA=
-github.com/ysmood/glog v0.0.1/go.mod h1:owScO8LA1vh7J6rVcWy3DvI+5lNCZnW5A5RhxbFWs7Q=
-github.com/ysmood/gop v0.3.0 h1:b/t6tbGSIaSqfnhb1R6Xkye4ZkINfKiUxYZF33JEZWU=
-github.com/ysmood/gop v0.3.0/go.mod h1:K4LAB/BdLArknXrVSy+DyXcfb8P85JwAtwYM8zlb0mU=
+github.com/ysmood/glog v0.0.4 h1:CtBqilMZs3uJDGpJOy21TKVkH2cW2tHTRNfFSpRcUGw=
+github.com/ysmood/glog v0.0.4/go.mod h1:owScO8LA1vh7J6rVcWy3DvI+5lNCZnW5A5RhxbFWs7Q=
+github.com/ysmood/gop v0.4.2 h1:KtW1/RugapWs1iW9ynQdk52BK6TWdP9zC0qDOhW8EDE=
+github.com/ysmood/gop v0.4.2/go.mod h1:K4LAB/BdLArknXrVSy+DyXcfb8P85JwAtwYM8zlb0mU=
 github.com/ysmood/got v0.42.3 h1:HCt1ctNOM4HXiRfwnLG452FgOskhO48HXEDk1mrXprw=
 github.com/ysmood/got v0.42.3/go.mod h1:uFF8sPWgVvWIGrjASUgtH0AbnU7ipaXGVaFtWdl3yP0=
 go.opencensus.io v0.24.0 h1:y73uSU6J157QMP2kn2r30vwW1A2W2WFwSCGnAVxeaD0=

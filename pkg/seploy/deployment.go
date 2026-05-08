@@ -114,6 +114,8 @@ func (d *Deployment) deploy(ctx context.Context, registry string) error {
 	}
 	defer func() { _ = client.Close() }()
 
+	lg.Info(ctx, "Ensure remote docker env", "host", d.host())
+
 	if err := d.sshExec(client, scriptEnsureDocker); err != nil {
 		return fmt.Errorf("ssh failed to ensure docker: %w", err)
 	}
@@ -179,6 +181,8 @@ func (d *Deployment) deploy(ctx context.Context, registry string) error {
 	if err != nil {
 		return fmt.Errorf("failed to render deploy script: %w", err)
 	}
+
+	lg.Info(ctx, "Run deployment scrip on remote", "host", d.host())
 
 	err = d.sshExec(client, script)
 	if err != nil {

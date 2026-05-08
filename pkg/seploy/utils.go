@@ -1,17 +1,17 @@
 package seploy
 
 import (
-	"bytes"
+	"context"
+	"crypto/sha1"
+	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"text/template"
 
-	"github.com/ysmood/gop"
+	"github.com/ysmood/glog/pkg/lg"
 )
 
 // List prints running containers and volumes on the target host.
@@ -85,11 +85,10 @@ func imageName(imageTag string) string {
 
 func execScript(script string, vars map[string]string) error {
 	const shell = "bash"
-	stdout := newPrefixedWriter(os.Stdout, shell+" | ")
-	stderr := newPrefixedWriter(os.Stderr, shell+" ! ")
+	id := scriptHash(script, vars)
 
-	defer stdout.Flush()
-	defer stderr.Flush()
+	lg.Info(context.Background(), "exec", "shell", shell, "id", id)
+	defer lg.Info(context.Background(), "exec done", "shell", shell, "id", id)
 
 	cmd := exec.Command(shell, "-c", script)
 
@@ -100,77 +99,18 @@ func execScript(script string, vars map[string]string) error {
 
 	cmd.Env = append(append([]string{}, env...), os.Environ()...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
 }
 
-const prefixedWriterMaxBuf = 64 * 1024
-
-type prefixedWriter struct {
-	w      io.Writer
-	prefix []byte
-	buf    []byte
-}
-
-func newPrefixedWriter(w io.Writer, prefix string) *prefixedWriter {
-	return &prefixedWriter{w: w, prefix: []byte(gop.Stylize(prefix, []gop.Style{gop.Faint}))}
-}
-
-func (pw *prefixedWriter) Write(p []byte) (int, error) {
-	pw.buf = append(pw.buf, p...)
-
-	for {
-		i := bytes.IndexByte(pw.buf, '\n')
-		if i < 0 {
-			if len(pw.buf) >= prefixedWriterMaxBuf {
-				if err := pw.emit(pw.buf); err != nil {
-					return 0, err
-				}
-				pw.buf = pw.buf[:0]
-			}
-			break
-		}
-
-		if err := pw.emit(pw.buf[:i]); err != nil {
-			return 0, err
-		}
-
-		pw.buf = pw.buf[i+1:]
-	}
-
-	// Reclaim capacity once the backing array grows large but is mostly empty.
-	if cap(pw.buf) > prefixedWriterMaxBuf && len(pw.buf) < cap(pw.buf)/4 {
-		pw.buf = append([]byte(nil), pw.buf...)
-	}
-
-	return len(p), nil
-}
-
-func (pw *prefixedWriter) emit(line []byte) error {
-	if _, err := pw.w.Write(pw.prefix); err != nil {
-		return err
-	}
-	if _, err := pw.w.Write(line); err != nil {
-		return err
-	}
-	if _, err := pw.w.Write([]byte{'\n'}); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Flush writes any buffered bytes that never got a trailing newline.
-func (pw *prefixedWriter) Flush() {
-	if len(pw.buf) == 0 {
-		return
-	}
-	if err := pw.emit(pw.buf); err != nil {
-		slog.Error("failed to flush prefixed writer", "error", err)
-		return
-	}
-	pw.buf = nil
+func scriptHash(script string, vars map[string]string) string {
+	varsData, _ := json.Marshal(vars)
+	h := sha1.New()
+	h.Write([]byte(script))
+	h.Write(varsData)
+	return fmt.Sprintf("%x", sha1.Sum(nil))
 }
 
 func escapeShellString(input string) string {

@@ -16,6 +16,10 @@ import (
 )
 
 func (d *Deployment) sshExec(client *ssh.Client, script string) error {
+	id := scriptHash(script, nil)
+	lg.Info(context.Background(), "sshExec", "host", d.host(), "id", id)
+	defer lg.Info(context.Background(), "sshExec done", "host", d.host(), "id", id)
+
 	session, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("failed to create ssh session: %w", err)
@@ -23,8 +27,8 @@ func (d *Deployment) sshExec(client *ssh.Client, script string) error {
 	defer func() { _ = session.Close() }()
 
 	session.Stdin = bytes.NewBufferString(script)
-	session.Stdout = newPrefixedWriter(os.Stdout, d.host()+" | ")
-	session.Stderr = newPrefixedWriter(os.Stderr, d.host()+" ! ")
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
 
 	return session.Run("sudo bash -s")
 }
@@ -84,7 +88,9 @@ func (d *Deployment) connectSSH() (*ssh.Client, error) {
 		// Forward server banner messages (e.g. Tailscale SSH check-mode
 		// login URLs) instead of silently dropping them.
 		BannerCallback: func(message string) error {
-			_, _ = newPrefixedWriter(os.Stderr, host+" ! ").Write([]byte(message))
+			for _, line := range strings.Split(message, "\n") {
+				lg.Info(context.Background(), "SSH banner line", "host", host, "message", strings.TrimSpace(line))
+			}
 			return nil
 		},
 	}

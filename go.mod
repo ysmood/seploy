@@ -4,8 +4,7 @@ go 1.25.3
 
 require (
 	github.com/urfave/cli/v3 v3.8.0
-	github.com/ysmood/glog v0.0.1
-	github.com/ysmood/gop v0.3.0
+	github.com/ysmood/glog v0.0.4
 	golang.org/x/crypto v0.50.0
 )
 
@@ -29,6 +28,7 @@ require (
 	github.com/lmittmann/tint v1.1.3 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/ysmood/gop v0.4.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect
